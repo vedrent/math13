@@ -22,8 +22,11 @@ namespace math13
         private int score = 0;
         private bool gameOver = false;
         private int deathTimer = 0;
-        private int rocketCount = 3;
+        private int rocketCount = 2;
         private int explosionRadius = 50;
+        private int cometSpawnRate = 3;
+        private int cometSpeedX = 0;
+        private int cometSpeedY = 3;
 
         private Image spaceshipImage;
         private Image rocketImage;
@@ -101,6 +104,34 @@ namespace math13
         {
             if (gameOver && deathTimer == 0) return;
 
+            switch (score)
+            {
+                case >= 200 and < 400:
+                    cometSpawnRate = 5;
+                    cometSpeedX = 1;
+                    cometSpeedY = 4;
+                    break;
+                case >= 400 and < 600:
+                    cometSpawnRate = 7;
+                    cometSpeedY = 5;
+                    break;
+                case >= 600 and < 800:
+                    cometSpawnRate = 9;
+                    cometSpeedX = 2;
+                    cometSpeedY = 6;
+                    break;
+                case >= 800 and < 1000:
+                    cometSpawnRate = 11;
+                    cometSpeedY = 7;
+                    break;
+                case >= 1000:
+                    cometSpawnRate = 13;
+                    cometSpeedX = 3;
+                    cometSpeedY = 8;
+                    break;
+
+            }
+
             backgroundOffset += BackgroundSpeed;
 
             // Если фон полностью прокручивается, сбрасываем смещение
@@ -121,11 +152,11 @@ namespace math13
             items.RemoveAll(i => i.IsOutOfBounds(ClientSize));
 
             // Генерация комет
-            if (random.Next(0, 100) < 3) // 3% шанс появления новой кометы
+            if (random.Next(0, 100) < cometSpawnRate) // шанс появления новой кометы
             {
                 int x = random.Next(-70, ClientSize.Width);
-                if (random.Next(0, 100) < 5) comets.Add(new Comet(x, -70, 1));
-                else comets.Add(new Comet(x, -70, 0));
+                if (random.Next(0, 100) < 5) comets.Add(new Comet(x, -70, 1, cometSpeedX, cometSpeedY));
+                else comets.Add(new Comet(x, -70, 0, cometSpeedX, cometSpeedY));
             }
 
             // Проверка столкновений
@@ -380,13 +411,13 @@ namespace math13
         public int Type { get; private set; }
 
 
-        public Comet(int x, int y, int type)
+        public Comet(int x, int y, int type, int speedX, int speedY)
         {
             X = x;
             Y = y;
             Type = type;
-            SpeedX = new Random().Next(-2, 2);
-            SpeedY = new Random().Next(4, 6);
+            SpeedX = new Random().Next(-speedX, speedX);
+            SpeedY = new Random().Next(speedY, speedY + 2);
         }
 
         public void Move()
