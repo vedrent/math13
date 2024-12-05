@@ -1,4 +1,5 @@
-﻿using System;
+﻿using NAudio.Wave;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -8,6 +9,70 @@ using System.Windows.Forms;
 
 namespace math13
 {
+    public class SoundPlayer
+    {
+        private WaveOutEvent outputDevice;
+        private AudioFileReader audioFile;
+
+        public void Play(string filePath, bool loop = false)
+        {
+            //Stop(); // Останавливаем текущий звук, если проигрывается
+
+            var reader = new AudioFileReader(filePath);
+            audioFile = reader;
+            outputDevice = new WaveOutEvent();
+
+
+            outputDevice.Init(audioFile);
+            outputDevice.Play();
+        }
+
+        public void Stop()
+        {
+            outputDevice?.Stop();
+            outputDevice?.Dispose();
+            audioFile?.Dispose();
+
+            outputDevice = null;
+            audioFile = null;
+        }
+
+        // Вложенный класс для зацикливания звука
+        private class LoopStream : WaveStream
+        {
+            private readonly WaveStream sourceStream;
+
+            public LoopStream(WaveStream sourceStream)
+            {
+                this.sourceStream = sourceStream;
+                this.EnableLooping = true;
+            }
+
+            public bool EnableLooping { get; set; }
+
+            public override WaveFormat WaveFormat => sourceStream.WaveFormat;
+
+            public override long Length => sourceStream.Length;
+
+            public override long Position
+            {
+                get => sourceStream.Position;
+                set => sourceStream.Position = value;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                int read = sourceStream.Read(buffer, offset, count);
+                if (read == 0 && EnableLooping)
+                {
+                    sourceStream.Position = 0;
+                    read = sourceStream.Read(buffer, offset, count);
+                }
+                return read;
+            }
+        }
+    }
+
     public partial class MainForm : Form
     {
         private System.Windows.Forms.Timer gameTimer = new System.Windows.Forms.Timer();
@@ -18,6 +83,7 @@ namespace math13
         private List<Item> items = new List<Item>();
         private Random random = new Random();
         private HashSet<Keys> pressedKeys = new HashSet<Keys>();
+        private SoundPlayer soundPlayer = new SoundPlayer();
 
         private int score = 0;
         private bool gameOver = false;
@@ -25,7 +91,7 @@ namespace math13
         private int rocketCount = 2;
         private int explosionRadius = 50;
         private int cometSpawnRate = 3;
-        private int cometSpeedX = 0;
+        private int cometSpeedX = 2;
         private int cometSpeedY = 3;
 
         private Image spaceshipImage;
@@ -43,6 +109,12 @@ namespace math13
 
         private Image rocketBoostImage;
         private Image explosionBoostImage;
+
+        private string soundtrackSoundPath;
+        private string explosionSoundPath;
+        private string spaceshipExplosionSoundPath;
+        private string shootSoundPath;
+        private string itemSoundPath;
 
         private void LoadExplosionFrames(Image gif)
         {
@@ -78,6 +150,11 @@ namespace math13
             rocketBoostImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\rocket_boost.png");
             explosionBoostImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\explosion_boost.png");
 
+            soundtrackSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\soundtrack.mp3";
+            explosionSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\explosion.mp3";
+            spaceshipExplosionSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\spaceship_explosion.mp3";
+            shootSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\fire.mp3";
+            itemSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\item.mp3";
 
             //InitializeComponent();
             InitGame();
@@ -98,6 +175,8 @@ namespace math13
             this.KeyDown += MainForm_KeyDown;
             this.KeyUp += MainForm_KeyUp;
             this.Paint += MainForm_Paint;
+
+            soundPlayer.Play(soundtrackSoundPath);
         }
 
         private void GameTick(object sender, EventArgs e)
@@ -108,7 +187,7 @@ namespace math13
             {
                 case >= 200 and < 400:
                     cometSpawnRate = 5;
-                    cometSpeedX = 1;
+                    cometSpeedX = 3;
                     cometSpeedY = 4;
                     break;
                 case >= 400 and < 600:
@@ -117,7 +196,7 @@ namespace math13
                     break;
                 case >= 600 and < 800:
                     cometSpawnRate = 9;
-                    cometSpeedX = 2;
+                    cometSpeedX = 5;
                     cometSpeedY = 6;
                     break;
                 case >= 800 and < 1000:
@@ -126,7 +205,7 @@ namespace math13
                     break;
                 case >= 1000:
                     cometSpawnRate = 13;
-                    cometSpeedX = 3;
+                    cometSpeedX = 7;
                     cometSpeedY = 8;
                     break;
 
@@ -154,9 +233,25 @@ namespace math13
             // Генерация комет
             if (random.Next(0, 100) < cometSpawnRate) // шанс появления новой кометы
             {
-                int x = random.Next(-70, ClientSize.Width);
-                if (random.Next(0, 100) < 5) comets.Add(new Comet(x, -70, 1, cometSpeedX, cometSpeedY));
-                else comets.Add(new Comet(x, -70, 0, cometSpeedX, cometSpeedY));
+                int x;
+                int y;
+                int size = new Random().Next(60, 150);
+                if (random.NextDouble() < 0.5)
+                {
+                    x = random.Next(-size, ClientSize.Width);
+                    y = -size;
+                } else if (random.NextDouble() < 0.75)
+                {
+                    x = -size;
+                    y = random.Next(-size, ClientSize.Height / 2);
+                }
+                else
+                {
+                    x = ClientSize.Width;
+                    y = random.Next(-size, ClientSize.Height / 2);
+                }
+                if (random.Next(0, 100) < 5) comets.Add(new Comet(x, y, 1, cometSpeedX, cometSpeedY, size));
+                else comets.Add(new Comet(x, y, 0, cometSpeedX, cometSpeedY, size));
             }
 
             // Проверка столкновений
@@ -172,6 +267,7 @@ namespace math13
                         {
                             rockets.Remove(rocket); // Удаляем ракету после взрыва
                             explosions.Add(new Explosion(rocket.ExplosionArea, new AnimatedGif(explosionFrames, explosionDelays)));
+                            soundPlayer.Play(explosionSoundPath);
                             foreach (var hitComet in hitComets)
                             {
                                 hitComet.OnDestroyed(items);
@@ -189,9 +285,10 @@ namespace math13
                 if (spaceship.Bounds.IntersectsWith(comet.Bounds) && !gameOver)
                 {
                     gameOver = true;
-                    deathTimer = 65;
+                    deathTimer = 130;
                     spaceship.Direction = new Point(spaceship.Direction.X / 3, spaceship.Direction.Y / 3);
                     explosions.Add(new Explosion(new Rectangle(spaceship.X, spaceship.Y, 50, 50), new AnimatedGif(explosionFrames, explosionDelays)));
+                    soundPlayer.Play(explosionSoundPath);
                 }
             }
 
@@ -216,7 +313,7 @@ namespace math13
 
             if (gameOver)
             {
-                if (deathTimer > 1)
+                if (deathTimer > 65)
                 {
                     deathTimer--;
                     if (deathTimer % 4 == 0)
@@ -224,11 +321,26 @@ namespace math13
                         explosions.Add(new Explosion(new Rectangle(spaceship.X, spaceship.Y, 50, 50), new AnimatedGif(explosionFrames, explosionDelays)));
                     }
                 }
+                else if (deathTimer > 1) {
+                    deathTimer--;
+                    
+                }
                 else
                 {
                     deathTimer--;
                     gameTimer.Stop();
                     MessageBox.Show($"Игра окончена! Ваш счет: {score}");
+                }
+
+                if (deathTimer == 85)
+                {
+                    soundPlayer.Play(spaceshipExplosionSoundPath);
+                }
+
+                if (deathTimer == 65)
+                {
+                    spaceship.Direction = new Point(0, 0);
+                    explosions.Add(new Explosion(new Rectangle(spaceship.X - 50, spaceship.Y - 50, 150, 150), new AnimatedGif(explosionFrames, explosionDelays)));
                 }
 
             }
@@ -238,6 +350,7 @@ namespace math13
 
         private void HandleItemCollection(Item item)
         {
+            soundPlayer.Play(itemSoundPath);
             if (item.Type == 0)
             {
                 rocketCount ++;
@@ -271,6 +384,7 @@ namespace math13
             if (e.KeyCode == Keys.Space && rockets.Count < rocketCount)
             {
                 rockets.Add(new Rocket(spaceship.X + 20, spaceship.Y - 10, explosionRadius));
+                soundPlayer.Play(shootSoundPath);
             }
         }
 
@@ -303,7 +417,10 @@ namespace math13
 
 
             // Отрисовка звездолета
-            spaceship.Draw(g, spaceshipImage);
+            if (deathTimer == 0 || deathTimer > 50)
+            {
+                spaceship.Draw(g, spaceshipImage);
+            }
 
             // Отрисовка ракет
             foreach (var rocket in rockets)
@@ -405,16 +522,19 @@ namespace math13
     {
         public int X { get; private set; }
         public int Y { get; private set; }
-        public Rectangle Bounds => new Rectangle(X, Y, 70, 70);
+        public int SizeX { get; private set; }
+        public int SizeY { get; private set; }
+        public Rectangle Bounds => new Rectangle(X, Y, SizeX, SizeY);
         public int SpeedX { get; private set; }
         public int SpeedY { get; private set; }
         public int Type { get; private set; }
 
 
-        public Comet(int x, int y, int type, int speedX, int speedY)
+        public Comet(int x, int y, int type, int speedX, int speedY, int size)
         {
             X = x;
             Y = y;
+            SizeX = SizeY = size;
             Type = type;
             SpeedX = new Random().Next(-speedX, speedX);
             SpeedY = new Random().Next(speedY, speedY + 2);
@@ -428,7 +548,7 @@ namespace math13
 
         public bool IsOutOfBounds(Size clientSize)
         {
-            return Y > clientSize.Height || X > clientSize.Width || X < -70;
+            return Y > clientSize.Height || X > clientSize.Width + 10 || X < -SizeX - 10;
         }
 
         public void Draw(Graphics g, Image cometImage)
