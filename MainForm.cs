@@ -15,16 +15,20 @@ namespace math13
         private List<Rocket> rockets = new List<Rocket>();
         private List<Comet> comets = new List<Comet>();
         private List<Explosion> explosions = new List<Explosion>();
+        private List<Item> items = new List<Item>();
         private Random random = new Random();
         private HashSet<Keys> pressedKeys = new HashSet<Keys>();
 
         private int score = 0;
         private bool gameOver = false;
         private int deathTimer = 0;
+        private int rocketCount = 3;
+        private int explosionRadius = 50;
 
         private Image spaceshipImage;
         private Image rocketImage;
         private Image cometImage;
+        private Image goldCometImage;
         private Image explosionImage;
         private AnimatedGif explosionAnimation;
         private List<Image> explosionFrames;
@@ -33,6 +37,9 @@ namespace math13
         private Image backgroundImage;
         private int backgroundOffset = 0; // Смещение по вертикали
         private const int BackgroundSpeed = 2;
+
+        private Image rocketBoostImage;
+        private Image explosionBoostImage;
 
         private void LoadExplosionFrames(Image gif)
         {
@@ -59,10 +66,15 @@ namespace math13
             spaceshipImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\spaceship.png");
             rocketImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\rocket.png");
             cometImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\comet.png");
+            goldCometImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\gold_comet.png");
             explosionImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\explosion.gif");
             LoadExplosionFrames(explosionImage);
 
             backgroundImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\background.png");
+
+            rocketBoostImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\rocket_boost.png");
+            explosionBoostImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\explosion_boost.png");
+
 
             //InitializeComponent();
             InitGame();
@@ -101,16 +113,19 @@ namespace math13
             spaceship.Move(ClientSize);
             rockets.ForEach(r => r.Move());
             comets.ForEach(c => c.Move());
+            items.ForEach(i => i.Fall());
 
             // Удаление ракет и комет, вышедших за границы
             rockets.RemoveAll(r => r.IsOutOfBounds(ClientSize));
             comets.RemoveAll(c => c.IsOutOfBounds(ClientSize));
+            items.RemoveAll(i => i.IsOutOfBounds(ClientSize));
 
             // Генерация комет
             if (random.Next(0, 100) < 3) // 3% шанс появления новой кометы
             {
                 int x = random.Next(-70, ClientSize.Width);
-                comets.Add(new Comet(x, -70));
+                if (random.Next(0, 100) < 5) comets.Add(new Comet(x, -70, 1));
+                else comets.Add(new Comet(x, -70, 0));
             }
 
             // Проверка столкновений
@@ -128,8 +143,10 @@ namespace math13
                             explosions.Add(new Explosion(rocket.ExplosionArea, new AnimatedGif(explosionFrames, explosionDelays)));
                             foreach (var hitComet in hitComets)
                             {
+                                hitComet.OnDestroyed(items);
+                                if (hitComet.Type == 0) score += 10;
+                                else if (hitComet.Type == 1) score += 50;
                                 comets.Remove(hitComet); // Уничтожаем все кометы в радиусе
-                                score += 10;         // Начисляем очки
                             }
                         }
                     }
@@ -156,6 +173,16 @@ namespace math13
                 }
             }
 
+            foreach (var item in items.ToList())
+            {
+                if (item.Bounds.IntersectsWith(spaceship.Bounds)) // Если предмет касается корабля
+                {
+                    item.IsCollected = true;
+                    HandleItemCollection(item);
+                    items.Remove(item); // Убираем предмет
+                }
+            }
+
             if (gameOver)
             {
                 if (deathTimer > 1)
@@ -178,6 +205,26 @@ namespace math13
             Invalidate(); // Перерисовка
         }
 
+        private void HandleItemCollection(Item item)
+        {
+            if (item.Type == 0)
+            {
+                rocketCount ++;
+            }
+            else if (item.Type == 1)
+            {
+                explosionRadius *= 2; 
+                System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 5000 }; // 5 секунд
+                timer.Tick += (s, e) =>
+                {
+                    explosionRadius /= 2; // Восстанавливаем радиус
+                    timer.Stop();
+                };
+                timer.Start();
+            }
+        }
+
+
         private void OnFrameChanged(object sender, EventArgs e)
         {
             Invalidate(); // Перерисовываем окно для отображения нового кадра
@@ -190,9 +237,9 @@ namespace math13
             pressedKeys.Add(e.KeyCode);
             UpdateSpaceshipDirection();
 
-            if (e.KeyCode == Keys.Space && rockets.Count < 3)
+            if (e.KeyCode == Keys.Space && rockets.Count < rocketCount)
             {
-                rockets.Add(new Rocket(spaceship.X + 20, spaceship.Y - 10));
+                rockets.Add(new Rocket(spaceship.X + 20, spaceship.Y - 10, explosionRadius));
             }
         }
 
@@ -236,12 +283,19 @@ namespace math13
             // Отрисовка комет
             foreach (var comet in comets)
             {
-                comet.Draw(g, cometImage);
+                if (comet.Type == 0) comet.Draw(g, cometImage);
+                else if (comet.Type == 1) comet.Draw(g, goldCometImage);
             }
 
             foreach (var explosion in explosions)
             {
                 explosion.Draw(g);
+            }
+
+            foreach (var item in items)
+            {
+                if (item.Type == 0) item.Draw(g, rocketBoostImage);
+                else if (item.Type == 1) item.Draw(g, explosionBoostImage);
             }
 
             // Отображение очков
@@ -283,12 +337,13 @@ namespace math13
         public int X { get; private set; }
         public int Y { get; private set; }
         public Rectangle Bounds => new Rectangle(X, Y, 15, 40);
-        public int ExplosionRadius { get; } = 50;
+        public int ExplosionRadius { get; private set; }
 
-        public Rocket(int x, int y)
+        public Rocket(int x, int y, int explosionRadius)
         {
             X = x;
             Y = y;
+            ExplosionRadius = explosionRadius;
         }
 
         public void Move()
@@ -322,12 +377,14 @@ namespace math13
         public Rectangle Bounds => new Rectangle(X, Y, 70, 70);
         public int SpeedX { get; private set; }
         public int SpeedY { get; private set; }
+        public int Type { get; private set; }
 
 
-        public Comet(int x, int y)
+        public Comet(int x, int y, int type)
         {
             X = x;
             Y = y;
+            Type = type;
             SpeedX = new Random().Next(-2, 2);
             SpeedY = new Random().Next(4, 6);
         }
@@ -346,6 +403,17 @@ namespace math13
         public void Draw(Graphics g, Image cometImage)
         {
             g.DrawImage(cometImage, Bounds);
+        }
+
+        public void OnDestroyed(List<Item> items)
+        {
+            Random rand = new Random();
+            // Шанс выпадения предмета, например, 30%
+            if (rand.NextDouble() < 0.3)
+            {
+                int itemType = rand.Next(0, 2);
+                items.Add(new Item(X, Y, itemType)); // Предмет падает с центра кометы
+            }
         }
     }
 
@@ -410,6 +478,36 @@ namespace math13
         {
             currentFrame = 0;
             frameTimer = 0;
+        }
+    }
+
+    public class Item
+    {
+        public Rectangle Bounds { get; private set; }
+        public int Type { get; private set; }
+        public bool IsCollected { get; set; }
+
+        private int speed = 3; // Скорость падения предметов
+
+        public Item(int x, int y, int type)
+        {
+            Bounds = new Rectangle(x, y, 30, 30); // Размер предмета
+            Type = type;
+        }
+
+        public void Fall()
+        {
+            Bounds = new Rectangle(Bounds.X, Bounds.Y + speed, Bounds.Width, Bounds.Height); // Падение вниз
+        }
+
+        public bool IsOutOfBounds(Size clientSize)
+        {
+            return Bounds.Y > clientSize.Height;
+        }
+
+        public void Draw(Graphics g, Image itemImage)
+        {
+            g.DrawImage(itemImage, Bounds);
         }
     }
 }
