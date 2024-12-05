@@ -16,10 +16,11 @@ namespace math13
         private List<Comet> comets = new List<Comet>();
         private List<Explosion> explosions = new List<Explosion>();
         private Random random = new Random();
+        private HashSet<Keys> pressedKeys = new HashSet<Keys>();
+
         private int score = 0;
         private bool gameOver = false;
         private int deathTimer = 0;
-        private HashSet<Keys> pressedKeys = new HashSet<Keys>();
 
         private Image spaceshipImage;
         private Image rocketImage;
@@ -28,6 +29,10 @@ namespace math13
         private AnimatedGif explosionAnimation;
         private List<Image> explosionFrames;
         private List<int> explosionDelays;
+
+        private Image backgroundImage;
+        private int backgroundOffset = 0; // Смещение по вертикали
+        private const int BackgroundSpeed = 2;
 
         private void LoadExplosionFrames(Image gif)
         {
@@ -57,6 +62,8 @@ namespace math13
             explosionImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\explosion.gif");
             LoadExplosionFrames(explosionImage);
 
+            backgroundImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\background.png");
+
             //InitializeComponent();
             InitGame();
         }
@@ -81,6 +88,14 @@ namespace math13
         private void GameTick(object sender, EventArgs e)
         {
             if (gameOver && deathTimer == 0) return;
+
+            backgroundOffset += BackgroundSpeed;
+
+            // Если фон полностью прокручивается, сбрасываем смещение
+            if (backgroundOffset >= backgroundImage.Height)
+            {
+                backgroundOffset = 0;
+            }
 
             // Обновление положения объектов
             spaceship.Move(ClientSize);
@@ -204,6 +219,10 @@ namespace math13
         private void MainForm_Paint(object sender, PaintEventArgs e)
         {
             Graphics g = e.Graphics;
+
+            g.DrawImage(backgroundImage, new Rectangle(0, backgroundOffset, ClientSize.Width, backgroundImage.Height));
+            g.DrawImage(backgroundImage, new Rectangle(0, backgroundOffset - backgroundImage.Height, ClientSize.Width, backgroundImage.Height));
+
 
             // Отрисовка звездолета
             spaceship.Draw(g, spaceshipImage);
