@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.Linq;
 using System.Net.Sockets;
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.TextBox;
 
 namespace math13
 {
@@ -84,6 +85,7 @@ namespace math13
         private Random random = new Random();
         private HashSet<Keys> pressedKeys = new HashSet<Keys>();
         private SoundPlayer soundPlayer = new SoundPlayer();
+        private DeathStar deathStar;
 
         private int score = 0;
         private bool gameOver = false;
@@ -93,6 +95,11 @@ namespace math13
         private int cometSpawnRate = 3;
         private int cometSpeedX = 2;
         private int cometSpeedY = 3;
+        private bool isDeathStarActive = false;
+        DateTime deathStarTimer;
+
+        private const int TargetFPS = 60;
+        private DateTime lastFrameTime = DateTime.Now;
 
         private Image spaceshipImage;
         private Image rocketImage;
@@ -102,8 +109,11 @@ namespace math13
         private AnimatedGif explosionAnimation;
         private List<Image> explosionFrames;
         private List<int> explosionDelays;
+        private Image deathStarImage;
+        private Image deathStarOpenImage;
 
         private Image backgroundImage;
+        private Bitmap bufferedBackground;
         private int backgroundOffset = 0; // Смещение по вертикали
         private const int BackgroundSpeed = 2;
 
@@ -115,6 +125,7 @@ namespace math13
         private string spaceshipExplosionSoundPath;
         private string shootSoundPath;
         private string itemSoundPath;
+        private string blastSoundPath;
 
         private void LoadExplosionFrames(Image gif)
         {
@@ -136,6 +147,18 @@ namespace math13
             }
         }
 
+        private void PrepareBufferedBackground()
+        {
+            bufferedBackground = new Bitmap(ClientSize.Width, backgroundImage.Height * 2);
+
+            using (Graphics g = Graphics.FromImage(bufferedBackground))
+            {
+                g.DrawImage(backgroundImage, new Rectangle(0, 0, ClientSize.Width, ClientSize.Height));
+                g.DrawImage(backgroundImage, new Rectangle(0, -backgroundImage.Height, ClientSize.Width, backgroundImage.Height));
+            }
+        }
+
+
         public MainForm()
         {
             spaceshipImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\spaceship.png");
@@ -150,11 +173,15 @@ namespace math13
             rocketBoostImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\rocket_boost.png");
             explosionBoostImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\explosion_boost.png");
 
+            deathStarImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\deathstar.png");
+            deathStarOpenImage = Image.FromFile("C:\\_coding\\progmath\\math13\\Images\\deathstar_open.png");
+
             soundtrackSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\soundtrack.mp3";
             explosionSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\explosion.mp3";
             spaceshipExplosionSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\spaceship_explosion.mp3";
             shootSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\fire.mp3";
             itemSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\item.mp3";
+            blastSoundPath = "C:\\_coding\\progmath\\math13\\Sounds\\blast.mp3";
 
             //InitializeComponent();
             InitGame();
@@ -162,9 +189,10 @@ namespace math13
 
         private void InitGame()
         {
-            this.Width = 800;
-            this.Height = 600;
+            this.Width = 1000;
+            this.Height = 800;
             this.DoubleBuffered = true;
+            PrepareBufferedBackground();
 
             spaceship = new Spaceship(ClientSize.Width / 2 - 25, ClientSize.Height - 60);
 
@@ -183,6 +211,10 @@ namespace math13
         {
             if (gameOver && deathTimer == 0) return;
 
+            DateTime currentFrameTime = DateTime.Now;
+            if ((currentFrameTime - lastFrameTime).TotalMilliseconds < 1000 / TargetFPS)
+                return;
+
             switch (score)
             {
                 case >= 200 and < 400:
@@ -195,23 +227,26 @@ namespace math13
                     cometSpeedY = 5;
                     break;
                 case >= 600 and < 800:
-                    cometSpawnRate = 9;
+                    cometSpawnRate = 8;
                     cometSpeedX = 5;
                     cometSpeedY = 6;
                     break;
                 case >= 800 and < 1000:
-                    cometSpawnRate = 11;
+                    cometSpawnRate = 9;
                     cometSpeedY = 7;
                     break;
-                case >= 1000:
-                    cometSpawnRate = 13;
-                    cometSpeedX = 7;
-                    cometSpeedY = 8;
+                case >= 1000 and < 1500:
+                    cometSpawnRate = 7;
+                    cometSpeedX = 4;
+                    cometSpeedY = 5;
                     break;
-
+                case >= 1500:
+                    cometSpawnRate = 0;
+                    break;
             }
 
             backgroundOffset += BackgroundSpeed;
+            //backgroundOffset += (backgroundOffset + BackgroundSpeed) % backgroundImage.Height;
 
             // Если фон полностью прокручивается, сбрасываем смещение
             if (backgroundOffset >= backgroundImage.Height)
@@ -255,6 +290,7 @@ namespace math13
             }
 
             // Проверка столкновений
+            //if (score < 1000)
             foreach (var rocket in rockets.ToList())
             {
                 foreach (var comet in comets.ToList())
@@ -271,14 +307,27 @@ namespace math13
                             foreach (var hitComet in hitComets)
                             {
                                 hitComet.OnDestroyed(items);
-                                if (hitComet.Type == 0) score += 10;
-                                else if (hitComet.Type == 1) score += 50;
+                                if (rocket.IsFriendly)
+                                {
+                                    if (hitComet.Type == 0) score += 10;
+                                    else if (hitComet.Type == 1) score += 50;
+                                }
                                 comets.Remove(hitComet); // Уничтожаем все кометы в радиусе
                             }
                         }
                     }
                 }
+
+                if (!rocket.IsFriendly && spaceship.Bounds.IntersectsWith(rocket.Bounds) && !gameOver)
+                {
+                    gameOver = true;
+                    deathTimer = 130;
+                    spaceship.Direction = new Point(spaceship.Direction.X / 3, spaceship.Direction.Y / 3);
+                    explosions.Add(new Explosion(new Rectangle(spaceship.X, spaceship.Y, 50, 50), new AnimatedGif(explosionFrames, explosionDelays)));
+                    soundPlayer.Play(explosionSoundPath);
+                }
             }
+            
 
             foreach (var comet in comets)
             {
@@ -329,7 +378,7 @@ namespace math13
                 {
                     deathTimer--;
                     gameTimer.Stop();
-                    MessageBox.Show($"Игра окончена! Ваш счет: {score}");
+                    MessageBox.Show($"Игра окончена, Вы проиграли. Ваш счет: {score}");
                 }
 
                 if (deathTimer == 85)
@@ -344,6 +393,93 @@ namespace math13
                 }
 
             }
+
+            if (!isDeathStarActive && score >= 1000 && score < 1500)
+            {
+                // Создаём звезду смерти при достижении 1000 очков
+                deathStar = new DeathStar(ClientSize.Width / 2 - 75, -150, 150);
+                isDeathStarActive = true;
+                deathStarTimer = DateTime.Now;
+            }
+
+            if (isDeathStarActive)
+            {
+                if (deathStar.Y < 50)
+                {
+                    deathStar.Move();
+                }
+                if ((DateTime.Now - deathStarTimer).TotalMilliseconds % 10000 < 5000)
+                {
+                    deathStar.IsOpen = false;
+                    deathStar.IsHitted = false;
+                    deathStar.Fire(rockets, new Point(spaceship.X + 25, spaceship.Y + 25), soundPlayer, blastSoundPath);
+                }
+                else if (deathStar.IsHitted) deathStar.IsOpen = false;
+                else deathStar.IsOpen = true;
+
+                foreach (var rocket in rockets.ToList())
+                {
+                    if (rocket.IsFriendly && rocket.Bounds.IntersectsWith(deathStar.WeakPoint) && deathStar.IsOpen)
+                    {
+                        rockets.Remove(rocket);
+                        deathStar.Hp--;
+                        deathStar.IsHitted = true;
+                        explosions.Add(new Explosion(deathStar.WeakPoint, new AnimatedGif(explosionFrames, explosionDelays)));
+                        soundPlayer.Play(explosionSoundPath);
+                    }
+                }
+
+                if (deathStar.Hp == 0 && !deathStar.IsDestroyed && deathStar.DeathTimer == 0)
+                {
+                    deathStar.DeathTimer = 150;
+                }
+
+                if (deathStar.DeathTimer > 65)
+                {
+                    deathStar.DeathTimer--;
+                    if (deathStar.DeathTimer % 15 == 0)
+                    {
+                        explosions.Add(new Explosion(new Rectangle(
+                            deathStar.X + (deathStar.DeathTimer / 15 - 5) * (deathStar.Size / 5), 
+                            deathStar.Y + deathStar.Size / 2 - 25, 
+                            50, 50), new AnimatedGif(explosionFrames, explosionDelays)));
+                        soundPlayer.Play(explosionSoundPath);
+                    }
+                } 
+                else if (deathStar.DeathTimer > 1)
+                {
+                    deathStar.DeathTimer--;
+                }
+                else if (deathStar.Hp == 0)
+                {
+                    deathStar.IsDestroyed = true;
+                    deathStar.DeathTimer = 0;
+                    isDeathStarActive = false;
+                    score += 500;
+
+                    System.Windows.Forms.Timer endTimer = new System.Windows.Forms.Timer { Interval = 2000 }; // 5 секунд
+                    endTimer.Tick += (s, e) =>
+                    {
+                        gameTimer.Stop();
+                        endTimer.Stop();
+                        MessageBox.Show($"Вы победили! Ваш счет: {score}");
+                    };
+                    endTimer.Start();
+                    
+                } 
+
+                if (deathStar.DeathTimer == 65)
+                {
+                    explosions.Add(new Explosion(new Rectangle(deathStar.X - 25, deathStar.Y - 25, deathStar.Size + 50, deathStar.Size + 50), new AnimatedGif(explosionFrames, explosionDelays)));
+                    soundPlayer.Play(explosionSoundPath);
+                } 
+            }
+
+
+
+            if (score >= 50 && !isDeathStarActive && score < 1500) score = 1000;
+
+            lastFrameTime = currentFrameTime;
 
             Invalidate(); // Перерисовка
         }
@@ -381,9 +517,9 @@ namespace math13
             pressedKeys.Add(e.KeyCode);
             UpdateSpaceshipDirection();
 
-            if (e.KeyCode == Keys.Space && rockets.Count < rocketCount)
+            if (e.KeyCode == Keys.Space && rockets.Count(r => r.IsFriendly) < rocketCount)
             {
-                rockets.Add(new Rocket(spaceship.X + 20, spaceship.Y - 10, explosionRadius));
+                rockets.Add(new Rocket(spaceship.X + 20, spaceship.Y - 10, explosionRadius, true, new Point()));
                 soundPlayer.Play(shootSoundPath);
             }
         }
@@ -412,9 +548,16 @@ namespace math13
         {
             Graphics g = e.Graphics;
 
-            g.DrawImage(backgroundImage, new Rectangle(0, backgroundOffset, ClientSize.Width, backgroundImage.Height));
-            g.DrawImage(backgroundImage, new Rectangle(0, backgroundOffset - backgroundImage.Height, ClientSize.Width, backgroundImage.Height));
+            g.SetClip(new Rectangle(0, -backgroundImage.Height, ClientSize.Width, ClientSize.Height + backgroundImage.Height));
 
+            //g.DrawImage(backgroundImage, new Rectangle(0, backgroundOffset, ClientSize.Width, Math.Max(ClientSize.Height, backgroundImage.Height)));
+            //g.DrawImage(backgroundImage, new Rectangle(0, backgroundOffset - backgroundImage.Height, ClientSize.Width, Math.Max(ClientSize.Height, backgroundImage.Height)));
+            g.DrawImage(bufferedBackground, new Rectangle(0, backgroundOffset, ClientSize.Width, ClientSize.Height),
+                new Rectangle(0, 0, ClientSize.Width, ClientSize.Height), GraphicsUnit.Pixel);
+            g.DrawImage(bufferedBackground, new Rectangle(0, backgroundOffset - backgroundImage.Height, ClientSize.Width, ClientSize.Height),
+                new Rectangle(0, 0, ClientSize.Width, ClientSize.Height), GraphicsUnit.Pixel);
+
+            g.ResetClip();
 
             // Отрисовка звездолета
             if (deathTimer == 0 || deathTimer > 50)
@@ -435,15 +578,24 @@ namespace math13
                 else if (comet.Type == 1) comet.Draw(g, goldCometImage);
             }
 
-            foreach (var explosion in explosions)
-            {
-                explosion.Draw(g);
-            }
-
             foreach (var item in items)
             {
                 if (item.Type == 0) item.Draw(g, rocketBoostImage);
                 else if (item.Type == 1) item.Draw(g, explosionBoostImage);
+            }
+
+            if (isDeathStarActive && (deathStar.DeathTimer > 50 || deathStar.Hp > 0))
+            {
+                if (deathStar.IsOpen)
+                {
+                    deathStar.Draw(g, deathStarOpenImage);
+                }
+                else deathStar.Draw(g, deathStarImage);
+            }
+
+            foreach (var explosion in explosions)
+            {
+                explosion.Draw(g);
             }
 
             // Отображение очков
@@ -486,22 +638,42 @@ namespace math13
         public int Y { get; private set; }
         public Rectangle Bounds => new Rectangle(X, Y, 15, 40);
         public int ExplosionRadius { get; private set; }
+        public bool IsFriendly { get; private set; }
+        private float DirectionX { get; set; }
+        private float DirectionY { get; set; }
+        private readonly float Speed = 10f;
 
-        public Rocket(int x, int y, int explosionRadius)
+        public Rocket(int x, int y, int explosionRadius, bool isFriendly, Point target)
         {
             X = x;
             Y = y;
             ExplosionRadius = explosionRadius;
+            IsFriendly = isFriendly;
+
+            if (IsFriendly)
+            {
+                DirectionX = 0;
+                DirectionY = -1;
+            }
+            else
+            {
+                float deltaX = target.X - x;
+                float deltaY = target.Y - y;
+                float magnitude = (float)Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+                DirectionX = deltaX / magnitude;
+                DirectionY = deltaY / magnitude;
+            }
         }
 
         public void Move()
         {
-            Y -= 10; // Движение вверх
+            X += (int)(DirectionX * Speed);
+            Y += (int)(DirectionY * Speed);
         }
 
         public bool IsOutOfBounds(Size clientSize)
         {
-            return Y < 0;
+            return Y < 0 || Y > clientSize.Height || X < 0 || X > clientSize.Width;
         }
 
         public Rectangle ExplosionArea => new Rectangle(
@@ -514,7 +686,27 @@ namespace math13
 
         public void Draw(Graphics g, Image rocketImage)
         {
-            g.DrawImage(rocketImage, Bounds);
+            var state = g.Save();
+
+            // Рассчитываем угол поворота
+            float angle = (float)(Math.Atan2(DirectionY, DirectionX) * 180 / Math.PI + 90);
+
+            // Центр ракеты для вращения
+            float centerX = X + Bounds.Width / 2f;
+            float centerY = Y + Bounds.Height / 2f;
+
+            // Перемещаем систему координат в центр ракеты
+            g.TranslateTransform(centerX, centerY);
+
+            // Вращаем графику
+            g.RotateTransform(angle);
+
+            // Рисуем изображение ракеты, смещая его так, чтобы центр совпал
+            g.DrawImage(rocketImage, -Bounds.Width / 2f, -Bounds.Height / 2f, Bounds.Width, Bounds.Height);
+
+            // Восстанавливаем исходную трансформацию
+            g.Restore(state);
+            //g.DrawImage(rocketImage, Bounds);
         }
     }
 
@@ -548,7 +740,7 @@ namespace math13
 
         public bool IsOutOfBounds(Size clientSize)
         {
-            return Y > clientSize.Height || X > clientSize.Width + 10 || X < -SizeX - 10;
+            return Y > clientSize.Height || X > clientSize.Width + 1 || X < -SizeX - 1;
         }
 
         public void Draw(Graphics g, Image cometImage)
@@ -659,6 +851,58 @@ namespace math13
         public void Draw(Graphics g, Image itemImage)
         {
             g.DrawImage(itemImage, Bounds);
+        }
+    }
+
+    public class DeathStar
+    {
+        public int X { get; private set; }
+        public int Y { get; private set; }
+        public int Size { get; private set; }
+        public bool IsOpen { get; set; }
+        public bool IsHitted { get; set; }
+        public bool IsDestroyed { get; set; }
+        public int DeathTimer { get; set; }
+        public int Hp { get; set; }
+        public Rectangle Bounds => new Rectangle(X, Y, Size, Size);
+        public Rectangle WeakPoint => new Rectangle(X + 90, Y + 15, 40, 40);
+        private int fireCooldown = 0;
+        private readonly int fireRate = 60;
+
+        public DeathStar(int x, int y, int size)
+        {
+            X = x;
+            Y = y;
+            Size = size;
+            IsOpen = false;
+            IsHitted = false;
+            IsDestroyed = false;
+            DeathTimer = 0;
+            Hp = 1;
+        }
+
+        public void Move()
+        {
+            Y += 2;
+        }
+
+        public void Fire(List<Rocket> rockets, Point playerPosition, SoundPlayer soundPlayer, string blastSoundPath)
+        {
+            if (fireCooldown == 0)
+            {
+                rockets.Add(new Rocket(X + Size / 2, Y + Size, 50, false, playerPosition));
+                fireCooldown = fireRate;
+                soundPlayer.Play(blastSoundPath);
+            }
+            else
+            {
+                fireCooldown--;
+            }
+        }
+
+        public void Draw(Graphics g, Image deathStarImage)
+        {
+            g.DrawImage(deathStarImage, Bounds);
         }
     }
 }
